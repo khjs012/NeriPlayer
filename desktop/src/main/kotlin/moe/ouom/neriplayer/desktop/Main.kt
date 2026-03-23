@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -47,6 +48,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -57,7 +59,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import java.awt.Desktop
+import java.net.URLEncoder
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import javax.swing.JFileChooser
 import javax.swing.UIManager
 import javax.swing.filechooser.FileNameExtensionFilter
@@ -70,6 +82,93 @@ private data class DesktopTrack(
 )
 
 private val supportedAudioExtensions = setOf("mp3", "flac", "wav", "ogg", "m4a", "aac")
+
+
+private enum class DesktopSearchPlatform(val label: String) {
+    CLOUD_MUSIC("网易云 API"),
+    QQ_MUSIC("QQ 音乐 API"),
+}
+
+private data class DesktopSearchResult(
+    val id: String,
+    val songName: String,
+    val singer: String,
+    val duration: String,
+    val albumName: String?,
+    val sourceLabel: String,
+)
+
+private class DesktopOnlineSearchRepository {
+    private val client = OkHttpClient()
+    private val json = Json { ignoreUnknownKeys = true }
+
+    suspend fun search(platform: DesktopSearchPlatform, keyword: String): List<DesktopSearchResult> {
+        if (keyword.isBlank()) return emptyList()
+        return when (platform) {
+            DesktopSearchPlatform.CLOUD_MUSIC -> searchCloudMusic(keyword)
+            DesktopSearchPlatform.QQ_MUSIC -> searchQQMusic(keyword)
+        }
+    }
+
+    private suspend fun searchCloudMusic(keyword: String): List<DesktopSearchResult> = withContext(Dispatchers.IO) {
+        val encoded = URLEncoder.encode(keyword, Charsets.UTF_8)
+        val request = Request.Builder()
+            .url("https://music.163.com/api/search/get/web?type=1&s=$encoded&limit=20&offset=0")
+            .header("Referer", "https://music.163.com/")
+            .header("User-Agent", "Mozilla/5.0")
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) error("网易云搜索失败: ${response.code}")
+            val root = json.parseToJsonElement(response.body.string()).jsonObject
+            val songs = root["result"]?.jsonObject?.get("songs")?.jsonArray ?: return@use emptyList()
+            songs.map { songElement ->
+                val song = songElement.jsonObject
+                val artists = song["ar"]?.jsonArray?.joinToString("/") { it.jsonObject["name"]?.jsonPrimitive?.content.orEmpty() }.orEmpty()
+                val album = song["al"]?.jsonObject
+                DesktopSearchResult(
+                    id = song["id"]?.jsonPrimitive?.content.orEmpty(),
+                    songName = song["name"]?.jsonPrimitive?.content.orEmpty(),
+                    singer = artists,
+                    duration = formatDuration((song["dt"]?.jsonPrimitive?.longOrNull ?: 0L) / 1000L),
+                    albumName = album?.get("name")?.jsonPrimitive?.contentOrNull,
+                    sourceLabel = "网易云",
+                )
+            }
+        }
+    }
+
+    private suspend fun searchQQMusic(keyword: String): List<DesktopSearchResult> = withContext(Dispatchers.IO) {
+        val encoded = URLEncoder.encode(keyword, Charsets.UTF_8)
+        val request = Request.Builder()
+            .url("https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=20&p=1&w=$encoded&cr=1&g_tk=5381")
+            .header("Referer", "https://y.qq.com")
+            .header("User-Agent", "Mozilla/5.0")
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) error("QQ 音乐搜索失败: ${response.code}")
+            val root = json.parseToJsonElement(response.body.string()).jsonObject
+            val songs = root["data"]?.jsonObject?.get("song")?.jsonObject?.get("list")?.jsonArray ?: return@use emptyList()
+            songs.map { songElement ->
+                val song = songElement.jsonObject
+                val singers = song["singer"]?.jsonArray?.joinToString("/") { it.jsonObject["name"]?.jsonPrimitive?.content.orEmpty() }.orEmpty()
+                DesktopSearchResult(
+                    id = song["songmid"]?.jsonPrimitive?.content.orEmpty(),
+                    songName = song["songname"]?.jsonPrimitive?.content.orEmpty(),
+                    singer = singers,
+                    duration = formatDuration(song["interval"]?.jsonPrimitive?.longOrNull ?: 0L),
+                    albumName = song["albumname"]?.jsonPrimitive?.contentOrNull,
+                    sourceLabel = "QQ 音乐",
+                )
+            }
+        }
+    }
+}
+
+private fun formatDuration(seconds: Long): String {
+    val minutes = seconds / 60
+    val remainingSeconds = seconds % 60
+    return "%d:%02d".format(minutes, remainingSeconds)
+}
 
 fun main() = application {
     UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
@@ -89,10 +188,17 @@ fun main() = application {
 @Composable
 private fun DesktopApp() {
     val tracks = remember { mutableStateListOf<DesktopTrack>() }
+    val searchRepository = remember { DesktopOnlineSearchRepository() }
+    val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var selectedTrack by remember { mutableStateOf<DesktopTrack?>(null) }
     var currentFolder by remember { mutableStateOf<File?>(null) }
     val queue = remember { mutableStateListOf<DesktopTrack>() }
+    var apiKeyword by remember { mutableStateOf("") }
+    var apiPlatform by remember { mutableStateOf(DesktopSearchPlatform.CLOUD_MUSIC) }
+    val apiResults = remember { mutableStateListOf<DesktopSearchResult>() }
+    var apiLoading by remember { mutableStateOf(false) }
+    var apiError by remember { mutableStateOf<String?>(null) }
     val filteredTracks = remember(tracks, query) {
         tracks.filter {
             query.isBlank() ||
@@ -137,6 +243,31 @@ private fun DesktopApp() {
             Divider(modifier = Modifier.fillMaxHeight().width(1.dp), color = Color(0xFF252A34))
             Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
                 HeaderBar(query = query, onQueryChange = { query = it })
+                ApiSearchPanel(
+                    keyword = apiKeyword,
+                    platform = apiPlatform,
+                    results = apiResults,
+                    loading = apiLoading,
+                    error = apiError,
+                    onKeywordChange = { apiKeyword = it },
+                    onPlatformChange = { apiPlatform = it },
+                    onSearch = {
+                        scope.launch {
+                            apiLoading = true
+                            apiError = null
+                            runCatching { searchRepository.search(apiPlatform, apiKeyword) }
+                                .onSuccess {
+                                    apiResults.clear()
+                                    apiResults.addAll(it)
+                                }
+                                .onFailure {
+                                    apiResults.clear()
+                                    apiError = it.message ?: "搜索失败"
+                                }
+                            apiLoading = false
+                        }
+                    },
+                )
                 Row(modifier = Modifier.fillMaxSize()) {
                     TrackLibrary(
                         modifier = Modifier.weight(1.15f).fillMaxHeight(),
@@ -254,6 +385,66 @@ private fun HeaderBar(query: String, onQueryChange: (String) -> Unit) {
             modifier = Modifier.width(320.dp),
             singleLine = true,
         )
+    }
+}
+
+@Composable
+private fun ApiSearchPanel(
+    keyword: String,
+    platform: DesktopSearchPlatform,
+    results: List<DesktopSearchResult>,
+    loading: Boolean,
+    error: String?,
+    onKeywordChange: (String) -> Unit,
+    onPlatformChange: (DesktopSearchPlatform) -> Unit,
+    onSearch: () -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF12161D)),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("在线 API 搜索", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                DesktopSearchPlatform.entries.forEach { option ->
+                    AssistChip(
+                        onClick = { onPlatformChange(option) },
+                        label = { Text(option.label) },
+                        leadingIcon = if (option == platform) ({ Icon(Icons.Rounded.Search, contentDescription = null) }) else null,
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = keyword,
+                    onValueChange = onKeywordChange,
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    placeholder = { Text("搜索原来的 API 曲库") },
+                )
+                Button(onClick = onSearch, enabled = keyword.isNotBlank() && !loading) {
+                    if (loading) {
+                        CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (loading) "搜索中" else "开始搜索")
+                }
+            }
+            error?.let { Text(it, color = Color(0xFFFF8A80)) }
+            if (results.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    results.take(6).forEach { result ->
+                        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1A202A))) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("${result.songName} · ${result.singer}", maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                                Text("${result.sourceLabel} / ${result.albumName ?: "未知专辑"} / ${result.duration}", color = Color(0xFF9AA4B2), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("ID: ${result.id}", color = Color(0xFF7F8A9A), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

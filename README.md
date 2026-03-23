@@ -97,6 +97,7 @@ NeriPlayer 是一个基于 **Jetpack Compose + Media3** 的原生 Android
 ## PC 预览版 / Desktop Preview
 - 新增 `desktop` 模块，提供一个 **Compose Desktop** 预览版。
 - 当前支持扫描本地音乐文件夹、搜索曲目、维护临时队列，并通过系统默认播放器打开音频。
+- Desktop 预览版还补上了原有 API 搜索入口，可直接调用网易云 / QQ 音乐搜索接口查看结果。
 - 这是一个给 PC 端先落地的起点版本，后续可以继续把 Android 现有的数据层逐步抽成共享模块。
 
 ## 平台现状 / Platform Status
