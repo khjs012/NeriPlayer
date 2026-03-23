@@ -1,5 +1,6 @@
 plugins {
     kotlin("jvm")
+    alias(libs.plugins.kotlin.compose)
     id("org.jetbrains.compose")
     application
 }
@@ -22,7 +23,7 @@ compose.desktop {
                 org.jetbrains.compose.desktop.application.dsl.TargetFormat.Deb,
             )
             packageName = "NeriPlayer Desktop"
-            packageVersion = "0.1.0"
+            packageVersion = "1.0.0"
         }
     }
 }
