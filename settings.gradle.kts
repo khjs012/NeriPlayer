@@ -23,3 +23,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "NeriPlayer"
 include(":app")
+
+include(":desktop")
