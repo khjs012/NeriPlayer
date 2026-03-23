@@ -73,6 +73,11 @@ The current focus is not to build a public cloud service, but to integrate onlin
 
 ---
 
+## Desktop Preview
+- A new `desktop` module now provides a **Compose Desktop** preview build.
+- It currently supports scanning local music folders, searching tracks, maintaining a temporary queue, and opening audio with the system default player.
+- This is the first PC-oriented stepping stone; the Android data layer can be extracted into shared modules later.
+
 ## Platform Status
 - **NetEase Cloud Music**: Login, search, curated playlist/album access, playback, downloads, lyrics completion.
 - **Bilibili**: Login, search, favorites access, multi-part video-to-audio playback, downloads.
