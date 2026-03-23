@@ -2,15 +2,10 @@ plugins {
     kotlin("jvm")
     alias(libs.plugins.kotlin.compose)
     id("org.jetbrains.compose")
-    application
 }
 
 kotlin {
     jvmToolchain(17)
-}
-
-application {
-    mainClass.set("moe.ouom.neriplayer.desktop.MainKt")
 }
 
 compose.desktop {
