@@ -279,7 +279,7 @@ private fun TrackLibrary(
                         val selected = track == selectedTrack
                         Card(
                             colors = CardDefaults.cardColors(containerColor = if (selected) Color(0xFF20304A) else Color(0xFF1A202A)),
-                            modifier = Modifier.fillMaxWidth().animateItemPlacement().clickable { onSelect(track) },
+                            modifier = Modifier.fillMaxWidth().clickable { onSelect(track) },
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(14.dp),
